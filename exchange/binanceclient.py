@@ -1,4 +1,6 @@
 import csv
+import hmac
+import hashlib
 import requests
 import numpy as np
 import pandas as pd
@@ -9,13 +11,87 @@ from datetime import datetime, timezone
 class BinanceAPIClient(Exception):
     base_asset: str
     quote_asset: str
+    api_key: str
+    secret_key: str
 
-    def __init__(self, base_asset, quote_asset):
+    def __init__(self, base_asset, quote_asset, api_key='', secret_key=''):
         self.base = base_asset
         self.quote = quote_asset
         self.candlestick = []
+        self.api = api_key
+        self.secret = secret_key
         self.pair = self._get_pair()
         self._chek_pair()
+
+    def new_order_market(self, side: str, quantity=None, quote_order_qty=None,
+                         time_in_force='IOC', recv_window=5000):
+        """
+        :param side: str: "BUY" or "SELL"
+        :param time_in_force: str: 'IOC' -- Immediate Or Cancel, 'GTC' -- Good Til Canceled, 'FOK' -- Fill or Kill
+        :param quantity: float or None: MARKET orders using the quantity field specifies
+                         the amount of the base asset the user wants to buy or sell at the market price.
+                         For example, sending a MARKET order on BTCUSDT will specify how much BTC the user is buying
+                         or selling.
+        :param quote_order_qty: float or None: MARKET orders using quoteOrderQty specifies the amount the user wants
+                                to spend (when buying) or receive (when selling) the quote asset; the correct quantity
+                                will be determined based on the market liquidity and quoteOrderQty.
+                                Using BTCUSDT as an example:
+                                On the BUY side, the order will buy as many BTC as quoteOrderQty USDT can.
+                                On the SELL side, the order will sell as much BTC needed to receive quoteOrderQty USDT.
+        :param recv_window: int: max -- 60_000 With recv_window, you can specify that the request must be processed
+                                 within a certain number of milliseconds or be rejected by the server.
+        """
+        headers = {'X-MBX-APIKEY': self.api}
+        if quantity is not None:
+            params = {"symbol": self.pair,
+                      "side": side,
+                      "type": "MARKET",
+                      "timeInForce": time_in_force,
+                      "quantity": str(quantity),
+                      "recvWindow": recv_window,
+                      "timestamp": 0,
+                      "signature": None}
+        elif quote_order_qty is not None:
+            params = {"symbol": self.pair,
+                      "side": side,
+                      "type": "MARKET",
+                      "timeInForce": time_in_force,
+                      "quoteOrderQty": str(quote_order_qty),
+                      "recvWindow": recv_window,
+                      "timestamp": 0,
+                      "signature": None}
+        else:
+            raise Exception("There MUST be quantity or quoteOrderQty")
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
+        params["signature"] = self._get_signature(total_params)
+        params["timestamp"] = self.get_now_timestamp()
+        resp = requests.post("https://api.binance.com/api/v3/order", headers=headers, params=params)
+        return resp.json()
+
+    def cancel_order(self, order_id, recv_window=5000):
+        headers = {'X-MBX-APIKEY': self.api}
+        params = {"symbol": self.pair,
+                  "orderId": order_id,
+                  "recvWindow": recv_window,
+                  "timestamp": 0,
+                  "signature": None}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
+        params["signature"] = self._get_signature(total_params)
+        params["timestamp"] = self.get_now_timestamp()
+        resp = requests.delete("https://api.binance.com/api/v3/order", headers=headers, params=params)
+        return resp.json()
+
+    def cancel_all_orders(self, recv_window=5000):
+        headers = {'X-MBX-APIKEY': self.api}
+        params = {"symbol": self.pair,
+                  "recvWindow": recv_window,
+                  "timestamp": 0,
+                  "signature": None}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
+        params["signature"] = self._get_signature(total_params)
+        params["timestamp"] = self.get_now_timestamp()
+        resp = requests.delete("https://api.binance.comapi/v3/openOrders", headers=headers, params=params)
+        return resp.json()
 
     def _get_pair(self):
         return self.base + self.quote
@@ -40,15 +116,15 @@ class BinanceAPIClient(Exception):
         resp = requests.get("https://api.binance.com/api/v3/klines", params=params)
         self.candlestick = resp.json()
 
-    def get_candlestick_for_given_time(self, start_y, start_m, start_d,
-                                       end_y, end_m, end_d, candles_interval: str = "1m"):
+    def get_candlestick_for_given_time(self, start_day: datetime,
+                                       end_day: datetime, candles_interval: str = "1m"):
         intervals = ["1m", "3m", "5m", "15m", "30m",
                      "1h", "2h", "4h", "6h", "8h", "12h",
                      "1d", "3d", "1w", "1M"]
         BinanceAPIClient._chek_interval(candles_interval)
         delta = get_intervals(intervals)[candles_interval]
-        start_date = datetime(start_y, start_m, start_d).replace(tzinfo=timezone.utc).timestamp() * 1000
-        end_date = datetime(end_y, end_m, end_d).replace(tzinfo=timezone.utc).timestamp() * 1000
+        start_date = start_day.replace(tzinfo=timezone.utc).timestamp() * 1000
+        end_date = end_day.replace(tzinfo=timezone.utc).timestamp() * 1000
         data = []
         while start_date < end_date:
             if start_date + 1000 * delta < end_date:
@@ -84,6 +160,9 @@ class BinanceAPIClient(Exception):
             csv_writer.writerow(csv_headers)
             csv_writer.writerows(data_for_csv)
 
+    def _get_signature(self, total_params):
+        return hmac.new(self.secret.encode(), total_params.encode(), hashlib.sha256).hexdigest()
+
     @staticmethod
     def get_server_time():
         resp = requests.get("https://api.binance.com/api/v3/time")
@@ -96,3 +175,7 @@ class BinanceAPIClient(Exception):
                      "1d", "3d", "1w", "1M"]
         if interval not in intervals:
             raise Exception("candles_interval must be one of the strings: " + ', '.join(intervals))
+
+    @staticmethod
+    def get_now_timestamp():
+        return int(datetime.now().timestamp() * 1000)
