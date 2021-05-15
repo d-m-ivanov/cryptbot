@@ -23,15 +23,19 @@ class BinanceAPIClient(Exception):
         self.pair = self._get_pair()
         self._chek_pair()
 
-    def new_order_market(self, side: str, quantity=None, quote_order_qty=None,
-                         time_in_force='IOC', recv_window=5000):
+    def new_order(self, side: str, type_="MARKET", time_in_force='GTC',
+                  quantity=None, quote_order_qty=None, price=None,
+                  stop_price=None, recv_window=5000):
         """
         :param side: str: "BUY" or "SELL"
+        :param type_: str: LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER
         :param time_in_force: str: 'IOC' -- Immediate Or Cancel, 'GTC' -- Good Til Canceled, 'FOK' -- Fill or Kill
         :param quantity: float or None: MARKET orders using the quantity field specifies
                          the amount of the base asset the user wants to buy or sell at the market price.
                          For example, sending a MARKET order on BTCUSDT will specify how much BTC the user is buying
                          or selling.
+        :param price: float
+        :param stop_price: float
         :param quote_order_qty: float or None: MARKET orders using quoteOrderQty specifies the amount the user wants
                                 to spend (when buying) or receive (when selling) the quote asset; the correct quantity
                                 will be determined based on the market liquidity and quoteOrderQty.
@@ -42,29 +46,43 @@ class BinanceAPIClient(Exception):
                                  within a certain number of milliseconds or be rejected by the server.
         """
         headers = {'X-MBX-APIKEY': self.api}
-        if quantity is not None:
-            params = {"symbol": self.pair,
-                      "side": side,
-                      "type": "MARKET",
-                      "timeInForce": time_in_force,
-                      "quantity": str(quantity),
-                      "recvWindow": recv_window,
-                      "timestamp": 0,
-                      "signature": None}
-        elif quote_order_qty is not None:
-            params = {"symbol": self.pair,
-                      "side": side,
-                      "type": "MARKET",
-                      "timeInForce": time_in_force,
-                      "quoteOrderQty": str(quote_order_qty),
-                      "recvWindow": recv_window,
-                      "timestamp": 0,
-                      "signature": None}
+        params = {"symbol": self.pair, "side": side, "type": type_}
+        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
+            params["timeInForce"] = time_in_force
+        if (type_ == "MARKET") and (quantity is None):
+            params["quoteOrderQty"] = quote_order_qty
         else:
-            raise Exception("There MUST be quantity or quoteOrderQty")
-        total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
-        params["signature"] = self._get_signature(total_params)
+            params["quantity"] = quantity
+        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT", "LIMIT_MAKER"]:
+            params["price"] = price
+        if type_ in ["STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]:
+            params["stopPrice"] = stop_price
+        params["recvWindow"] = recv_window
         params["timestamp"] = self.get_now_timestamp()
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
+        params["signature"] = self._get_signature(total_params)
+        resp = requests.post("https://api.binance.com/api/v3/order/test", headers=headers, params=params)
+        return resp.json()
+
+    def try_order(self, side: str, type_="MARKET", time_in_force='GTC',
+                  quantity=None, quote_order_qty=None, price=None,
+                  stop_price=None, recv_window=5000):
+        headers = {'X-MBX-APIKEY': self.api}
+        params = {"symbol": self.pair, "side": side, "type": type_}
+        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
+            params["timeInForce"] = time_in_force
+        if (type_ == "MARKET") and (quantity is None):
+            params["quoteOrderQty"] = quote_order_qty
+        else:
+            params["quantity"] = quantity
+        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT", "LIMIT_MAKER"]:
+            params["price"] = price
+        if type_ in ["STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]:
+            params["stopPrice"] = stop_price
+        params["recvWindow"] = recv_window
+        params["timestamp"] = self.get_now_timestamp()
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
+        params["signature"] = self._get_signature(total_params)
         resp = requests.post("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
@@ -73,11 +91,10 @@ class BinanceAPIClient(Exception):
         params = {"symbol": self.pair,
                   "orderId": order_id,
                   "recvWindow": recv_window,
-                  "timestamp": 0,
+                  "timestamp": self.get_now_timestamp(),
                   "signature": None}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
         params["signature"] = self._get_signature(total_params)
-        params["timestamp"] = self.get_now_timestamp()
         resp = requests.delete("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
@@ -85,11 +102,10 @@ class BinanceAPIClient(Exception):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
                   "recvWindow": recv_window,
-                  "timestamp": 0,
+                  "timestamp": self.get_now_timestamp(),
                   "signature": None}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
         params["signature"] = self._get_signature(total_params)
-        params["timestamp"] = self.get_now_timestamp()
         resp = requests.delete("https://api.binance.comapi/v3/openOrders", headers=headers, params=params)
         return resp.json()
 
