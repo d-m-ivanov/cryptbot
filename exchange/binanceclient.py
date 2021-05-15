@@ -4,7 +4,7 @@ import hashlib
 import requests
 import numpy as np
 import pandas as pd
-from supp_script import get_intervals
+from utils import get_intervals
 from datetime import datetime, timezone
 
 
@@ -23,12 +23,12 @@ class BinanceAPIClient(Exception):
         self.pair = self._get_pair()
         self._chek_pair()
 
-    def new_order(self, side: str, type_="MARKET", time_in_force='GTC',
+    def new_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                   quantity=None, quote_order_qty=None, price=None,
                   stop_price=None, recv_window=5000):
         """
         :param side: str: "BUY" or "SELL"
-        :param type_: str: LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER
+        :param order_type: str: LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER
         :param time_in_force: str: 'IOC' -- Immediate Or Cancel, 'GTC' -- Good Til Canceled, 'FOK' -- Fill or Kill
         :param quantity: float or None: MARKET orders using the quantity field specifies
                          the amount of the base asset the user wants to buy or sell at the market price.
@@ -46,16 +46,16 @@ class BinanceAPIClient(Exception):
                                  within a certain number of milliseconds or be rejected by the server.
         """
         headers = {'X-MBX-APIKEY': self.api}
-        params = {"symbol": self.pair, "side": side, "type": type_}
-        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
+        params = {"symbol": self.pair, "side": side, "type": order_type}
+        if order_type in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
             params["timeInForce"] = time_in_force
-        if (type_ == "MARKET") and (quantity is None):
+        if (order_type == "MARKET") and (quantity is None):
             params["quoteOrderQty"] = quote_order_qty
         else:
             params["quantity"] = quantity
-        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT", "LIMIT_MAKER"]:
+        if order_type in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT", "LIMIT_MAKER"]:
             params["price"] = price
-        if type_ in ["STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]:
+        if order_type in ["STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]:
             params["stopPrice"] = stop_price
         params["recvWindow"] = recv_window
         params["timestamp"] = self.get_now_timestamp()
@@ -64,20 +64,20 @@ class BinanceAPIClient(Exception):
         resp = requests.post("https://api.binance.com/api/v3/order/test", headers=headers, params=params)
         return resp.json()
 
-    def try_order(self, side: str, type_="MARKET", time_in_force='GTC',
-                  quantity=None, quote_order_qty=None, price=None,
-                  stop_price=None, recv_window=5000):
+    def send_test_order(self, side: str, order_type="MARKET", time_in_force='GTC',
+                        quantity=None, quote_order_qty=None, price=None,
+                        stop_price=None, recv_window=5000):
         headers = {'X-MBX-APIKEY': self.api}
-        params = {"symbol": self.pair, "side": side, "type": type_}
-        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
+        params = {"symbol": self.pair, "side": side, "type": order_type}
+        if order_type in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
             params["timeInForce"] = time_in_force
-        if (type_ == "MARKET") and (quantity is None):
+        if (order_type == "MARKET") and (quantity is None):
             params["quoteOrderQty"] = quote_order_qty
         else:
             params["quantity"] = quantity
-        if type_ in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT", "LIMIT_MAKER"]:
+        if order_type in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT", "LIMIT_MAKER"]:
             params["price"] = price
-        if type_ in ["STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]:
+        if order_type in ["STOP_LOSS", "STOP_LOSS_LIMIT", "TAKE_PROFIT", "TAKE_PROFIT_LIMIT"]:
             params["stopPrice"] = stop_price
         params["recvWindow"] = recv_window
         params["timestamp"] = self.get_now_timestamp()
@@ -127,7 +127,7 @@ class BinanceAPIClient(Exception):
         :param depth: max 1000
         :return:
         """
-        BinanceAPIClient._chek_interval(candles_interval)
+        BinanceAPIClient._check_interval(candles_interval)
         params = {"symbol": self.pair, "interval": candles_interval, "limit": depth}
         resp = requests.get("https://api.binance.com/api/v3/klines", params=params)
         self.candlestick = resp.json()
@@ -137,7 +137,7 @@ class BinanceAPIClient(Exception):
         intervals = ["1m", "3m", "5m", "15m", "30m",
                      "1h", "2h", "4h", "6h", "8h", "12h",
                      "1d", "3d", "1w", "1M"]
-        BinanceAPIClient._chek_interval(candles_interval)
+        BinanceAPIClient._check_interval(candles_interval)
         delta = get_intervals(intervals)[candles_interval]
         start_date = start_day.replace(tzinfo=timezone.utc).timestamp() * 1000
         end_date = end_day.replace(tzinfo=timezone.utc).timestamp() * 1000
@@ -157,7 +157,7 @@ class BinanceAPIClient(Exception):
                 data += resp.json()
         self.candlestick = data
 
-    def get_pandas_df(self):
+    def candlesticks_to_pandas(self):
         data_for_df = [[self.base, self.quote] + x for x in self.candlestick]
         df_headers = ['base_asset', 'quote_asset', 'open_time',
                       'open', 'high', 'low', 'close', 'volume',
@@ -185,7 +185,7 @@ class BinanceAPIClient(Exception):
         return resp.json()['serverTime']
 
     @staticmethod
-    def _chek_interval(interval):
+    def _check_interval(interval):
         intervals = ["1m", "3m", "5m", "15m", "30m",
                      "1h", "2h", "4h", "6h", "8h", "12h",
                      "1d", "3d", "1w", "1M"]
