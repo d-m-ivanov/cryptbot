@@ -86,14 +86,24 @@ class BinanceAPIClient(Exception):
         resp = requests.post("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
+    def query_order(self, order_id, recv_window=5000):
+        headers = {'X-MBX-APIKEY': self.api}
+        params = {"symbol": self.pair,
+                  "orderId": order_id,
+                  "recvWindow": recv_window,
+                  "timestamp": self.get_now_timestamp()}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
+        params["signature"] = self._get_signature(total_params)
+        resp = requests.get("https://api.binance.com/api/v3/order", headers=headers, params=params)
+        return resp.json()
+
     def cancel_order(self, order_id, recv_window=5000):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
                   "orderId": order_id,
                   "recvWindow": recv_window,
-                  "timestamp": self.get_now_timestamp(),
-                  "signature": None}
-        total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
+                  "timestamp": self.get_now_timestamp()}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
         resp = requests.delete("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
@@ -102,9 +112,8 @@ class BinanceAPIClient(Exception):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
                   "recvWindow": recv_window,
-                  "timestamp": self.get_now_timestamp(),
-                  "signature": None}
-        total_params = "&".join([key + "=" + str(value) for key, value in params.items() if key != "signature"])
+                  "timestamp": self.get_now_timestamp()}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
         resp = requests.delete("https://api.binance.comapi/v3/openOrders", headers=headers, params=params)
         return resp.json()
