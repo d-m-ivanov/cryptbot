@@ -86,7 +86,7 @@ class BinanceAPIClient(Exception):
         resp = requests.post("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
-    def query_order(self, order_id, recv_window=5000):
+    def get_order_status(self, order_id, recv_window=5000):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
                   "orderId": order_id,
