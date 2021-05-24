@@ -27,16 +27,13 @@ class BinanceAPIClient(Exception):
         self._stream_running = False
         self._stream_id = None
         self._candles_interval = ''
-        self._chek_pair()
+        self._check_pair()
 
     def __next__(self):
         while self._stream_running:
-            try:
-                candle = json.loads(self.ws.recv())
-                if candle['k']['x']:
-                    return json.loads(self.ws.recv())['k']
-            except KeyError:
-                pass
+            candle = json.loads(self.ws.recv())
+            if candle['k']['x']:
+                return candle['k']
         if self._stream_running is False:
             raise StopIteration
 
@@ -50,7 +47,7 @@ class BinanceAPIClient(Exception):
         self.api = api_key
         self.secret = secret_key
         self.pair = self._get_pair()
-        self._chek_pair()
+        self._check_pair()
 
     def new_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                   quantity=None, quote_order_qty=None, price=None,
@@ -157,6 +154,8 @@ class BinanceAPIClient(Exception):
                   "params": ["{symbol}@kline_{interval}".format(symbol=self.pair.lower(), interval=candles_interval)],
                   "id": stream_id}
         self.ws.send(json.dumps(params))
+        if json.loads(self.ws.recv())["result"] is not None:
+            raise Exception("Connection is failed!")
         self._stream_id = stream_id
         self._candles_interval = candles_interval
         return self.ws
@@ -173,9 +172,9 @@ class BinanceAPIClient(Exception):
     def _get_pair(self):
         return self.base + self.quote
 
-    def _chek_pair(self):
+    def _check_pair(self):
         data = []
-        with open("all_pairs.txt", "r") as f:
+        with open("../exchange/all_pairs.txt", "r") as f:
             for line in f:
                 data.append(line.rstrip("\n"))
             if self.pair not in data:
