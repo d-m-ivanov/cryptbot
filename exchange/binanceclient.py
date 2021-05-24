@@ -1,11 +1,13 @@
 import csv
 import hmac
+import json
 import hashlib
 import requests
 import numpy as np
 import pandas as pd
-from utils import get_intervals
+from exchange.utils import get_intervals
 from datetime import datetime, timezone
+from websocket import create_connection
 
 
 class BinanceAPIClient(Exception):
@@ -14,14 +16,38 @@ class BinanceAPIClient(Exception):
     api_key: str
     secret_key: str
 
-    def __init__(self, base_asset, quote_asset, api_key='', secret_key=''):
+    def __init__(self, base_asset=None, quote_asset=None, api_key='', secret_key=''):
         self.base = base_asset
         self.quote = quote_asset
         self.candlestick = []
         self.api = api_key
         self.secret = secret_key
         self.pair = self._get_pair()
-        self._chek_pair()
+        self.ws = None
+        self._stream_running = False
+        self._stream_id = None
+        self._candles_interval = ''
+        self._check_pair()
+
+    def __next__(self):
+        while self._stream_running:
+            candle = json.loads(self.ws.recv())
+            if candle['k']['x']:
+                return candle['k']
+        if self._stream_running is False:
+            raise StopIteration
+
+    def __iter__(self):
+        self._stream_running = True
+        return self
+
+    def set_settings(self, base_asset, quote_asset, api_key='', secret_key=''):
+        self.base = base_asset
+        self.quote = quote_asset
+        self.api = api_key
+        self.secret = secret_key
+        self.pair = self._get_pair()
+        self._check_pair()
 
     def new_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                   quantity=None, quote_order_qty=None, price=None,
@@ -86,6 +112,7 @@ class BinanceAPIClient(Exception):
         resp = requests.post("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
+    # Get order status with particular id
     def get_order_status(self, order_id, recv_window=5000):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
@@ -97,6 +124,7 @@ class BinanceAPIClient(Exception):
         resp = requests.get("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
+    # Cancel order with particular id
     def cancel_order(self, order_id, recv_window=5000):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
@@ -108,6 +136,7 @@ class BinanceAPIClient(Exception):
         resp = requests.delete("https://api.binance.com/api/v3/order", headers=headers, params=params)
         return resp.json()
 
+    # Cancel all orders
     def cancel_all_orders(self, recv_window=5000):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
@@ -118,12 +147,34 @@ class BinanceAPIClient(Exception):
         resp = requests.delete("https://api.binance.comapi/v3/openOrders", headers=headers, params=params)
         return resp.json()
 
+    # Start websocket candlestik stream
+    def start_candle_stream(self, candles_interval: str = "1m", stream_id=1):
+        self.ws = create_connection("wss://stream.binance.com:9443/ws")
+        params = {"method": "SUBSCRIBE",
+                  "params": ["{symbol}@kline_{interval}".format(symbol=self.pair.lower(), interval=candles_interval)],
+                  "id": stream_id}
+        self.ws.send(json.dumps(params))
+        if json.loads(self.ws.recv())["result"] is not None:
+            raise Exception("Connection is failed!")
+        self._stream_id = stream_id
+        self._candles_interval = candles_interval
+        return self.ws
+
+    # Stop websocket candlestik stream
+    def stop_candle_stream(self):
+        params = {"method": "UNSUBSCRIBE",
+                  "params": ["{symbol}@kline_{interval}".format(symbol=self.pair.lower(),
+                                                                interval=self._candles_interval)],
+                  "id": self._stream_id}
+        self.ws.send(json.dumps(params))
+        self._stream_running = False
+
     def _get_pair(self):
         return self.base + self.quote
 
-    def _chek_pair(self):
+    def _check_pair(self):
         data = []
-        with open("all_pairs.txt", "r") as f:
+        with open("../exchange/all_pairs.txt", "r") as f:
             for line in f:
                 data.append(line.rstrip("\n"))
             if self.pair not in data:
@@ -204,3 +255,4 @@ class BinanceAPIClient(Exception):
     @staticmethod
     def get_now_timestamp():
         return int(datetime.now().timestamp() * 1000)
+
