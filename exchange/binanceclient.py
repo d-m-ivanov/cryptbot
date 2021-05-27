@@ -49,6 +49,15 @@ class BinanceAPIClient(Exception):
         self.pair = self._get_pair()
         self._check_pair()
 
+    def get_wallet_info(self, snapshot_type="SPOT", limit=5, recv_window=5000):
+        headers = {'X-MBX-APIKEY': self.api}
+        params = {"type": snapshot_type, "limit": limit,
+                  "recvWindow": recv_window, "timestamp": self.get_now_timestamp()}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
+        params["signature"] = self._get_signature(total_params)
+        resp = requests.get("https://api.binance.com/sapi/v1/accountSnapshot", headers=headers, params=params)
+        return resp.json()
+
     def new_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                   quantity=None, quote_order_qty=None, price=None,
                   stop_price=None, recv_window=5000):
@@ -223,7 +232,13 @@ class BinanceAPIClient(Exception):
                       'open', 'high', 'low', 'close', 'volume',
                       'close_time', 'quote_asset_volume', 'number_of_trades',
                       'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore']
-        return pd.DataFrame(np.array(data_for_df), columns=df_headers).drop(['ignore'], axis=1)
+        numeric_headers = ['open', 'high', 'low', 'close', 'volume', 'quote_asset_volume',
+                           'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume']
+        candlestick_df = pd.DataFrame(np.array(data_for_df), columns=df_headers).drop(['ignore'], axis=1)
+        candlestick_df[numeric_headers] = candlestick_df[numeric_headers].apply(pd.to_numeric, errors='ignore')
+        candlestick_df['open_time'] = pd.to_datetime(candlestick_df.open_time, utc=True, unit='ms')
+        candlestick_df['close_time'] = pd.to_datetime(candlestick_df.close_time, utc=True, unit='ms')
+        return candlestick_df
 
     def save_csv(self):
         data_for_csv = [[self.base, self.quote] + x for x in self.candlestick]
@@ -255,4 +270,3 @@ class BinanceAPIClient(Exception):
     @staticmethod
     def get_now_timestamp():
         return int(datetime.now().timestamp() * 1000)
-
