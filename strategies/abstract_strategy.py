@@ -16,11 +16,11 @@ class AbstractStrategy(ABC):
         pass
 
     @abstractmethod
-    def test_buy(self, price_data, step):
+    def signal_buy(self, price_data, step):
         pass
 
     @abstractmethod
-    def test_sell(self, price_data, step):
+    def signal_sell(self, price_data, step):
         pass
 
     @abstractmethod

@@ -49,14 +49,34 @@ class BinanceAPIClient(Exception):
         self.pair = self._get_pair()
         self._check_pair()
 
-    def get_wallet_info(self, snapshot_type="SPOT", limit=5, recv_window=5000):
+    def get_wallet_info(self, snapshot_type="SPOT", limit=5, recv_window=10000):
         headers = {'X-MBX-APIKEY': self.api}
         params = {"type": snapshot_type, "limit": limit,
                   "recvWindow": recv_window, "timestamp": self.get_now_timestamp()}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        resp = requests.get("https://api.binance.com/sapi/v1/accountSnapshot", headers=headers, params=params)
-        return resp.json()
+        # Structure of this response looks like this :
+        # {"code": 200, "msg":"", "snapshotVos": [{"data":
+        # {"balances": [{"asset": "BTC","free": "0.09905021","locked": "0.00000000"}, {...}, ...], ...}, ...}]}
+        wallet_resp = requests.get("https://api.binance.com/sapi/v1/accountSnapshot",
+                                   headers=headers, params=params)
+        wallet_data = wallet_resp.json()["snapshotVos"][-1]["data"]["balances"]
+        # Here we write response data to dict in form {"asset": free amount of asset}
+        asset_list = [asset["asset"] for asset in wallet_data]
+        wallet_assets = {}
+        if self.base_asset in asset_list:
+            for asset in wallet_data:
+                if self.base_asset == asset["asset"]:
+                    wallet_assets[self.base_asset] = float(asset["free"])
+        else:
+            wallet_assets[self.base_asset] = 0.00000000
+        if self.quote_asset in asset_list:
+            for asset in wallet_data:
+                if self.quote_asset == asset["asset"]:
+                    wallet_assets[self.quote_asset] = float(asset["free"])
+        else:
+            wallet_assets[self.quote_asset] = 0.00000000
+        return wallet_assets
 
     def new_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                   quantity=None, quote_order_qty=None, price=None,
