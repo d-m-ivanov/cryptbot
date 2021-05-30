@@ -7,25 +7,29 @@ from strategies.abstract_strategy import AbstractStrategy
 class SMAStrategy(AbstractStrategy):
 
     def __init__(self, short_term=20, long_term=50, trading_capital=0.2,
-                 client: BinanceAPIClient = None, **kwargs) -> None:
+                 loses=0.8, client: BinanceAPIClient = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.short_term = short_term  # This is amount of variables for short term simple moving averages
         self.long_term = long_term  # This is amount of variables for long term simple moving averages
         self._client = client
         self._trading_capital = trading_capital
+        self._loses = loses
         self._position_open = False
         self._running = False
         self._buy_order_id = None
         self._sell_order_id = None
 
     def set_settings(self, short_term=20, long_term=50,
-                     client: BinanceAPIClient = None):
+                     trading_capital=0.2, loses=0.8, client: BinanceAPIClient = None):
         self.short_term = short_term
         self.long_term = long_term
         self._client = client
+        self._trading_capital = trading_capital
+        self._loses = loses
 
     def run(self, interval="5m", stream_id=1):
         self._running = True
+        capital = self._client.get_wallet_info()[self._client.quote_asset]
         # Load history
         price_data = self.get_history(interval=interval)
         # Start websocket stream of candles
@@ -37,6 +41,10 @@ class SMAStrategy(AbstractStrategy):
             self.check_sell_order()
             # Update wallet data
             wallet_data = self._client.get_wallet_info()
+            if capital < wallet_data[self._client.quote_asset] * self._loses:
+                print(f"We just loss {self._loses * 100}% of our capital. WHAT HAVE WE DONE!?")
+                self._client.cancel_all_orders()
+                break
             # Update
             price_data.loc[i, ["close_time", "close_price"]] = [pd.to_datetime(candle["T"], utc=True, unit="ms"),
                                                                 float(candle["c"])]
