@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 from exchange.binanceclient import BinanceAPIClient
 from strategies.abstract_strategy import AbstractStrategy
 
@@ -7,13 +6,13 @@ from strategies.abstract_strategy import AbstractStrategy
 class SMAStrategy(AbstractStrategy):
 
     def __init__(self, short_term=20, long_term=50, trading_capital=0.2,
-                 loses=0.8, client: BinanceAPIClient = None, **kwargs) -> None:
+                 losses=0.8, client: BinanceAPIClient = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.short_term = short_term  # This is amount of variables for short term simple moving averages
         self.long_term = long_term  # This is amount of variables for long term simple moving averages
         self._client = client
         self._trading_capital = trading_capital
-        self._loses = loses
+        self._losses = losses
         self._position_open = False
         self._running = False
         self._buy_order_id = None
@@ -25,11 +24,12 @@ class SMAStrategy(AbstractStrategy):
         self.long_term = long_term
         self._client = client
         self._trading_capital = trading_capital
-        self._loses = loses
+        self._losses = loses
 
-    def run(self, interval="5m", stream_id=1):
+    def run(self, interval="5m", stream_id=1, recv_window=5000):
         self._running = True
-        capital = self._client.get_wallet_info()[self._client.quote_asset]
+        wallet_data = self._client.get_wallet_info(recv_window=recv_window)
+        capital = wallet_data.loc[self._client.quote, "free"]
         # Load history
         price_data = self.get_history(interval=interval)
         # Start websocket stream of candles
@@ -37,30 +37,33 @@ class SMAStrategy(AbstractStrategy):
         i = self.long_term
         for candle in self._client:
             # Check orders
-            self.check_buy_order()
-            self.check_sell_order()
-            # Update wallet data
-            wallet_data = self._client.get_wallet_info()
-            if capital < wallet_data[self._client.quote_asset] * self._loses:
-                print(f"We just loss {self._loses * 100}% of our capital. WHAT HAVE WE DONE!?")
-                self._client.cancel_all_orders()
-                break
+            self.check_buy_order(recv_window=recv_window)
+            self.check_sell_order(recv_window=recv_window)
             # Update
             price_data.loc[i, ["close_time", "close_price"]] = [pd.to_datetime(candle["T"], utc=True, unit="ms"),
                                                                 float(candle["c"])]
             # Add new simple moving averages
             price_data.loc[i, str(self.short_term) + "_SMA"] = price_data.tail(self.short_term)["close_price"].mean()
             price_data.loc[i, str(self.long_term) + "_SMA"] = price_data.tail(self.long_term)["close_price"].mean()
+            # Update wallet data
+            wallet_data = self._client.get_wallet_info(recv_window=recv_window)
+            total_assets = (wallet_data.loc[self._client.quote, "free"]
+                            + wallet_data.loc[self._client.base, "free"]*price_data.loc[i, "close_price"])
+            # if we lost 20% of capital -- stop strategy
+            if total_assets < capital * self._losses:
+                self._client.cancel_order(order_id=self._buy_order_id, recv_window=recv_window)
+                self._client.stop_candle_stream()
+                break
             # Check if we want to buy
             if self.signal_buy(price_data=price_data, step=i):
-                trading_capital = wallet_data[self._client.quote_asset] * self._trading_capital
-                response = self._client.new_order(side="BUY", quote_order_qty=trading_capital)
+                trading_capital = wallet_data.loc[self._client.quote, "free"] * self._trading_capital
+                response = self._client.new_order(side="BUY", quote_order_qty=trading_capital, recv_window=recv_window)
                 # Here we memorize id of buy order
                 self._buy_order_id = response["orderId"]
             # Check if we want to sell
             if self.signal_sell(price_data=price_data, step=i):
-                amount_of_sell = wallet_data[self._client.base_asset]
-                response = self._client.new_order(side="SELL", quantity=amount_of_sell)
+                amount_of_sell = wallet_data.loc[self._client.base, "free"]
+                response = self._client.new_order(side="SELL", quantity=amount_of_sell, recv_window=recv_window)
                 # Here we memorize id of sell order
                 self._sell_order_id = response["orderId"]
             # Update data and counter
@@ -102,25 +105,31 @@ class SMAStrategy(AbstractStrategy):
             signal = False
         return signal
 
-    def check_buy_order(self) -> None:
+    def check_buy_order(self, recv_window) -> None:
         """
         Check if buy order filled.
         If order is filled set position_open = True, and forget buy_order_id.
         """
         if self._buy_order_id is not None:
-            order_status = self._client.get_order_status(order_id=self._buy_order_id)["status"]
-            if order_status == "FILLED":
+            order_status = self._client.get_order_status(order_id=self._buy_order_id, recv_window=recv_window)
+            if order_status["status"] == "FILLED":
+                self._position_open = True
+                self._buy_order_id = None
+            elif order_status["status"] == "EXPIRED":
                 self._position_open = True
                 self._buy_order_id = None
 
-    def check_sell_order(self):
+    def check_sell_order(self, recv_window):
         """
         Check if sell order filled.
         If order is filled set position_open = False, and forget sell_order_id.
         """
         if self._sell_order_id is not None:
-            order_status = self._client.get_order_status(order_id=self._sell_order_id)["status"]
-            if order_status == "FILLED":
+            order_status = self._client.get_order_status(order_id=self._sell_order_id, recv_window=recv_window)
+            if order_status["status"] == "FILLED":
+                self._position_open = False
+                self._sell_order_id = None
+            elif order_status["status"] == "EXPIRED":
                 self._position_open = False
                 self._sell_order_id = None
 

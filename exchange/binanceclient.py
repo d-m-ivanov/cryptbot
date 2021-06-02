@@ -16,7 +16,10 @@ class BinanceAPIClient(Exception):
     api_key: str
     secret_key: str
 
-    def __init__(self, base_asset=None, quote_asset=None, api_key='', secret_key=''):
+    def __init__(self, base_asset=None, quote_asset=None, api_key='', secret_key='', mode="test"):
+        """
+        :param mode: str: "test" -- start client on binance spot testnet; "prod" -- start client on real binance
+        """
         self.base = base_asset
         self.quote = quote_asset
         self.candlestick = []
@@ -28,6 +31,12 @@ class BinanceAPIClient(Exception):
         self._stream_id = None
         self._candles_interval = ''
         self._check_pair()
+        if mode == "prod":
+            self._http = "https://api.binance.com/"
+            self._wss = "wss://stream.binance.com:9443/ws"
+        if mode == "test":
+            self._http = "https://testnet.binance.vision/"
+            self._wss = "wss://testnet.binance.vision/ws"
 
     def __next__(self):
         while self._stream_running:
@@ -41,47 +50,45 @@ class BinanceAPIClient(Exception):
         self._stream_running = True
         return self
 
-    def set_settings(self, base_asset, quote_asset, api_key='', secret_key=''):
+    def set_settings(self, base_asset, quote_asset, api_key='', secret_key='', mode="test") -> None:
+        """
+        Method for changing client settings
+        """
         self.base = base_asset
         self.quote = quote_asset
         self.api = api_key
         self.secret = secret_key
         self.pair = self._get_pair()
         self._check_pair()
+        if mode == "prod":
+            self._http = "https://api.binance.com/"
+            self._wss = "wss://stream.binance.com:9443/ws"
+        if mode == "test":
+            self._http = "https://testnet.binance.vision/"
+            self._wss = "wss://testnet.binance.vision/ws"
 
-    def get_wallet_info(self, snapshot_type="SPOT", limit=5, recv_window=10000):
+    def get_wallet_info(self, recv_window=5000) -> pd.DataFrame:
+        """
+        :return: Pandas dataframe of wallet for gived account
+        """
         headers = {'X-MBX-APIKEY': self.api}
-        params = {"type": snapshot_type, "limit": limit,
-                  "recvWindow": recv_window, "timestamp": self.get_now_timestamp()}
+        params = {"recvWindow": recv_window, "timestamp": (self.get_now_timestamp())}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        # Structure of this response looks like this :
-        # {"code": 200, "msg":"", "snapshotVos": [{"data":
-        # {"balances": [{"asset": "BTC","free": "0.09905021","locked": "0.00000000"}, {...}, ...], ...}, ...}]}
-        wallet_resp = requests.get("https://api.binance.com/sapi/v1/accountSnapshot",
+        wallet_resp = requests.get(self._http + "api/v3/account",
                                    headers=headers, params=params)
-        wallet_data = wallet_resp.json()["snapshotVos"][-1]["data"]["balances"]
-        # Here we write response data to dict in form {"asset": free amount of asset}
-        asset_list = [asset["asset"] for asset in wallet_data]
-        wallet_assets = {}
-        if self.base_asset in asset_list:
-            for asset in wallet_data:
-                if self.base_asset == asset["asset"]:
-                    wallet_assets[self.base_asset] = float(asset["free"])
-        else:
-            wallet_assets[self.base_asset] = 0.00000000
-        if self.quote_asset in asset_list:
-            for asset in wallet_data:
-                if self.quote_asset == asset["asset"]:
-                    wallet_assets[self.quote_asset] = float(asset["free"])
-        else:
-            wallet_assets[self.quote_asset] = 0.00000000
-        return wallet_assets
+        wallet_data = pd.DataFrame(wallet_resp.json()["balances"]).apply(pd.to_numeric, errors='ignore') \
+            .set_index("asset")
+        if self.base not in wallet_data.index:
+            wallet_data.loc[self.base, :] = [0.0, 0.0]
+        return wallet_data
 
     def new_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                   quantity=None, quote_order_qty=None, price=None,
                   stop_price=None, recv_window=5000):
         """
+        Create new order of 'order_type'
+
         :param side: str: "BUY" or "SELL"
         :param order_type: str: LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER
         :param time_in_force: str: 'IOC' -- Immediate Or Cancel, 'GTC' -- Good Til Canceled, 'FOK' -- Fill or Kill
@@ -116,12 +123,33 @@ class BinanceAPIClient(Exception):
         params["timestamp"] = self.get_now_timestamp()
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        resp = requests.post("https://api.binance.com/api/v3/order/test", headers=headers, params=params)
+        resp = requests.post(self._http + "api/v3/order", headers=headers, params=params)
         return resp.json()
 
     def send_test_order(self, side: str, order_type="MARKET", time_in_force='GTC',
                         quantity=None, quote_order_qty=None, price=None,
                         stop_price=None, recv_window=5000):
+        """
+        Send test order
+
+        :param side: str: "BUY" or "SELL"
+        :param order_type: str: LIMIT, MARKET, STOP_LOSS, STOP_LOSS_LIMIT, TAKE_PROFIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER
+        :param time_in_force: str: 'IOC' -- Immediate Or Cancel, 'GTC' -- Good Til Canceled, 'FOK' -- Fill or Kill
+        :param quantity: float or None: MARKET orders using the quantity field specifies
+                         the amount of the base asset the user wants to buy or sell at the market price.
+                         For example, sending a MARKET order on BTCUSDT will specify how much BTC the user is buying
+                         or selling.
+        :param price: float
+        :param stop_price: float
+        :param quote_order_qty: float or None: MARKET orders using quoteOrderQty specifies the amount the user wants
+                                to spend (when buying) or receive (when selling) the quote asset; the correct quantity
+                                will be determined based on the market liquidity and quoteOrderQty.
+                                Using BTCUSDT as an example:
+                                On the BUY side, the order will buy as many BTC as quoteOrderQty USDT can.
+                                On the SELL side, the order will sell as much BTC needed to receive quoteOrderQty USDT.
+        :param recv_window: int: max -- 60_000 With recv_window, you can specify that the request must be processed
+                                 within a certain number of milliseconds or be rejected by the server.
+        """
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair, "side": side, "type": order_type}
         if order_type in ["LIMIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
@@ -138,11 +166,17 @@ class BinanceAPIClient(Exception):
         params["timestamp"] = self.get_now_timestamp()
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        resp = requests.post("https://api.binance.com/api/v3/order", headers=headers, params=params)
+        resp = requests.post(self._http + "api/v3/order/test", headers=headers, params=params)
         return resp.json()
 
     # Get order status with particular id
-    def get_order_status(self, order_id, recv_window=5000):
+    def get_order_status(self, order_id, recv_window=5000) -> dict:
+        """
+        :param order_id: int: Id of order
+        :param recv_window: int: max -- 60_000 With recv_window, you can specify that the request must be processed
+                                 within a certain number of milliseconds or be rejected by the server.
+        :return: information about order with Id 'order_id'
+        """
         headers = {'X-MBX-APIKEY': self.api}
         params = {"symbol": self.pair,
                   "orderId": order_id,
@@ -150,7 +184,28 @@ class BinanceAPIClient(Exception):
                   "timestamp": self.get_now_timestamp()}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        resp = requests.get("https://api.binance.com/api/v3/order", headers=headers, params=params)
+        resp = requests.get(self._http + "api/v3/order", headers=headers, params=params)
+        return resp.json()
+
+    def get_all_order_status(self, start_time, end_time, recv_window=5000) -> list:
+        """
+        Get all account orders from start_time to end_time; active, canceled, or filled.
+
+        :param start_time: timestamp in ms
+        :param end_time: timestamp in ms
+        :param recv_window: max -- 60_000 With recv_window, you can specify that the request must be processed
+                            within a certain number of milliseconds or be rejected by the server.
+        :return: list of orders
+        """
+        headers = {'X-MBX-APIKEY': self.api}
+        params = {"symbol": self.pair,
+                  "startTime": start_time,
+                  "endTime": end_time,
+                  "recvWindow": recv_window,
+                  "timestamp": self.get_now_timestamp()}
+        total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
+        params["signature"] = self._get_signature(total_params)
+        resp = requests.get(self._http + "api/v3/allOrders", headers=headers, params=params)
         return resp.json()
 
     # Cancel order with particular id
@@ -162,7 +217,7 @@ class BinanceAPIClient(Exception):
                   "timestamp": self.get_now_timestamp()}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        resp = requests.delete("https://api.binance.com/api/v3/order", headers=headers, params=params)
+        resp = requests.delete(self._http + "api/v3/order", headers=headers, params=params)
         return resp.json()
 
     # Cancel all orders
@@ -173,12 +228,12 @@ class BinanceAPIClient(Exception):
                   "timestamp": self.get_now_timestamp()}
         total_params = "&".join([key + "=" + str(value) for key, value in params.items()])
         params["signature"] = self._get_signature(total_params)
-        resp = requests.delete("https://api.binance.comapi/v3/openOrders", headers=headers, params=params)
+        resp = requests.delete(self._http + "api/v3/openOrders", headers=headers, params=params)
         return resp.json()
 
     # Start websocket candlestik stream
     def start_candle_stream(self, candles_interval: str = "1m", stream_id=1):
-        self.ws = create_connection("wss://stream.binance.com:9443/ws")
+        self.ws = create_connection(self._wss)
         params = {"method": "SUBSCRIBE",
                   "params": ["{symbol}@kline_{interval}".format(symbol=self.pair.lower(), interval=candles_interval)],
                   "id": stream_id}
@@ -209,16 +264,15 @@ class BinanceAPIClient(Exception):
             if self.pair not in data:
                 raise Exception("There is no pair " + self.pair + " in Binance exchange")
 
-    def get_candlestick(self, candles_interval: str = "1m", depth=500):
+    def get_candlestick(self, candles_interval: str = "1m", depth=500) -> None:
         """
         :param candles_interval: m -> minutes; h -> hours; d -> days; w -> weeks; M -> months
         1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M
         :param depth: max 1000
-        :return:
         """
         BinanceAPIClient._check_interval(candles_interval)
         params = {"symbol": self.pair, "interval": candles_interval, "limit": depth}
-        resp = requests.get("https://api.binance.com/api/v3/klines", params=params)
+        resp = requests.get(self._http + "api/v3/klines", params=params)
         self.candlestick = resp.json()
 
     def get_candlestick_for_given_time(self, start_day: datetime,
@@ -236,13 +290,13 @@ class BinanceAPIClient(Exception):
                 params = {"symbol": self.pair, "startTime": int(start_date),
                           "endTime": int(start_date + 1000 * delta), "interval": candles_interval, "limit": 1000}
                 start_date += 1000 * delta
-                resp = requests.get("https://api.binance.com/api/v3/klines", params=params)
+                resp = requests.get(self._http + "api/v3/klines", params=params)
                 data += resp.json()
             else:
                 params = {"symbol": self.pair, "startTime": int(start_date),
                           "endTime": int(end_date), "interval": candles_interval, "limit": 1000}
                 start_date += 1000 * delta
-                resp = requests.get("https://api.binance.com/api/v3/klines", params=params)
+                resp = requests.get(self._http + "api/v3/klines", params=params)
                 data += resp.json()
         self.candlestick = data
 
