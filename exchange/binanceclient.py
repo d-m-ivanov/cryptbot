@@ -298,6 +298,8 @@ class BinanceAPIClient(Exception):
                 start_date += 1000 * delta
                 resp = requests.get(self._http + "api/v3/klines", params=params)
                 data += resp.json()
+        for candle in data:
+            candle.pop()
         self.candlestick = data
 
     def candlesticks_to_pandas(self) -> pd.DataFrame:
