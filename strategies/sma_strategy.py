@@ -14,7 +14,6 @@ class SMAStrategy(AbstractStrategy):
         self._trading_capital = trading_capital
         self._losses = losses
         self._position_open = False
-        self._running = False
         self._buy_order_id = None
         self._sell_order_id = None
 
@@ -26,47 +25,34 @@ class SMAStrategy(AbstractStrategy):
         self._trading_capital = trading_capital
         self._losses = loses
 
-    def run(self, interval="5m", stream_id=1, recv_window=5000):
-        self._running = True
+    def run_strategy(self, candle_interval="5m", stream_id=1, recv_window=5000):
+        # Load wallet data
         wallet_data = self._client.get_wallet_info(recv_window=recv_window)
+        # Write capital we have
         capital = wallet_data.loc[self._client.quote, "free"]
         # Load history
-        price_data = self.get_history(interval=interval)
+        price_data = self.get_history(interval=candle_interval)
         # Start websocket stream of candles
-        self._client.start_candle_stream(candles_interval=interval, stream_id=stream_id)
+        self._client.start_candle_stream(candles_interval=candle_interval, stream_id=stream_id)
         i = self.long_term
         for candle in self._client:
             # Check orders
             self.check_buy_order(recv_window=recv_window)
             self.check_sell_order(recv_window=recv_window)
             # Update
-            price_data.loc[i, ["close_time", "close_price"]] = [pd.to_datetime(candle["T"], utc=True, unit="ms"),
-                                                                float(candle["c"])]
-            # Add new simple moving averages
-            price_data.loc[i, str(self.short_term) + "_SMA"] = price_data.tail(self.short_term)["close_price"].mean()
-            price_data.loc[i, str(self.long_term) + "_SMA"] = price_data.tail(self.long_term)["close_price"].mean()
+            price_data.loc[i, ["close_time", "close_price"]] = candle \
+                .rename(columns={"T": "close_time", "c": "close_price"}).loc[0, ["close_time", "close_price"]]
+            # Compute new simple moving averages
+            price_data = self.compute(price_data, step=i)
             # Update wallet data
             wallet_data = self._client.get_wallet_info(recv_window=recv_window)
             total_assets = (wallet_data.loc[self._client.quote, "free"]
-                            + wallet_data.loc[self._client.base, "free"]*price_data.loc[i, "close_price"])
+                            + wallet_data.loc[self._client.base, "free"] * price_data.loc[i, "close_price"])
             # if we lost 20% of capital -- stop strategy
-            if total_assets < capital * self._losses:
-                self._client.cancel_order(order_id=self._buy_order_id, recv_window=recv_window)
-                self._client.stop_candle_stream()
-                break
-            # Check if we want to buy
-            if self.signal_buy(price_data=price_data, step=i):
-                trading_capital = wallet_data.loc[self._client.quote, "free"] * self._trading_capital
-                response = self._client.new_order(side="BUY", quote_order_qty=trading_capital, recv_window=recv_window)
-                # Here we memorize id of buy order
-                self._buy_order_id = response["orderId"]
-            # Check if we want to sell
-            if self.signal_sell(price_data=price_data, step=i):
-                amount_of_sell = wallet_data.loc[self._client.base, "free"]
-                response = self._client.new_order(side="SELL", quantity=amount_of_sell, recv_window=recv_window)
-                # Here we memorize id of sell order
-                self._sell_order_id = response["orderId"]
-            # Update data and counter
+            self.stop_strategy(total_assets=total_assets, capital=capital, recv_window=recv_window)
+            # Send sell or buy orders if we want to
+            self.send_order(price_data=price_data, wallet_data=wallet_data, step=i, recv_window=recv_window)
+            # Update counter
             i += 1
 
     def get_history(self, interval: str) -> pd.DataFrame:
@@ -75,7 +61,7 @@ class SMAStrategy(AbstractStrategy):
         price_hist = self._client.candlesticks_to_pandas()
         price_data = pd.DataFrame(columns=["close_time",
                                            "close_price"])
-        price_data[["close_time", "close_price"]] = price_hist[['close_time', 'close']]
+        price_data[["close_time", "close_price"]] = price_hist[["T", "c"]]
         # Drop last candle because this is not closed
         price_data = price_data.drop(index=self.long_term, axis=0)
         # Calculate simple moving averages for short and long terms
@@ -105,9 +91,34 @@ class SMAStrategy(AbstractStrategy):
             signal = False
         return signal
 
-    def check_buy_order(self, recv_window) -> None:
+    def send_order(self, price_data, wallet_data, step, recv_window) -> None:
+        """This method sends buy or sell orders
+
+        :param price_data: price data on this step
+        :param wallet_data: wallet data on this step
+        :param step: number of steps in ren_strategy method
+        :param recv_window: parameter of orders
         """
-        Check if buy order filled.
+        # Check if we want to buy
+        if self.signal_buy(price_data=price_data, step=step):
+            trading_capital = wallet_data.loc[self._client.quote, "free"] * self._trading_capital
+            response = self._client.new_order(side="BUY", quote_order_qty=trading_capital, recv_window=recv_window)
+            # Here we memorize id of buy order
+            self._buy_order_id = response["orderId"]
+        # Check if we want to sell
+        if self.signal_sell(price_data=price_data, step=step):
+            amount_of_sell = wallet_data.loc[self._client.base, "free"]
+            response = self._client.new_order(side="SELL", quantity=amount_of_sell, recv_window=recv_window)
+            # Here we memorize id of sell order
+            self._sell_order_id = response["orderId"]
+
+    def compute(self, price_data: pd.DataFrame, step) -> pd.DataFrame:
+        price_data.loc[step, str(self.short_term) + "_SMA"] = price_data.tail(self.short_term)["close_price"].mean()
+        price_data.loc[step, str(self.long_term) + "_SMA"] = price_data.tail(self.long_term)["close_price"].mean()
+        return price_data
+
+    def check_buy_order(self, recv_window) -> None:
+        """Check if buy order filled.
         If order is filled set position_open = True, and forget buy_order_id.
         """
         if self._buy_order_id is not None:
@@ -120,8 +131,7 @@ class SMAStrategy(AbstractStrategy):
                 self._buy_order_id = None
 
     def check_sell_order(self, recv_window):
-        """
-        Check if sell order filled.
+        """Check if sell order filled.
         If order is filled set position_open = False, and forget sell_order_id.
         """
         if self._sell_order_id is not None:
@@ -133,5 +143,13 @@ class SMAStrategy(AbstractStrategy):
                 self._position_open = False
                 self._sell_order_id = None
 
-    def stop(self):
-        self._running = False
+    def stop_strategy(self, total_assets, capital, recv_window) -> None:
+        """ This method decides stop trading or not
+
+        :param total_assets: All quote asset we have (including quote asset in form base asset)
+        :param capital: Quote asset in the beginning of trading
+        :param recv_window: parameter of orders
+        """
+        if total_assets < capital * self._losses:
+            self._client.cancel_order(order_id=self._buy_order_id, recv_window=recv_window)
+            self._client.stop_candle_stream()
