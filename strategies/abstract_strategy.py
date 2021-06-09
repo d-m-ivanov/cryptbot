@@ -12,7 +12,7 @@ class AbstractStrategy(ABC):
         pass
 
     @abstractmethod
-    def run(self, interval, stream_id):
+    def run_strategy(self, interval, stream_id):
         pass
 
     @abstractmethod
@@ -24,5 +24,13 @@ class AbstractStrategy(ABC):
         pass
 
     @abstractmethod
-    def stop(self):
+    def send_order(self, price_data, wallet_data, step, recv_window):
+        pass
+
+    @abstractmethod
+    def compute(self, price_data, step):
+        pass
+
+    @abstractmethod
+    def stop_strategy(self, price_data, wallet_data, recv_window):
         pass
