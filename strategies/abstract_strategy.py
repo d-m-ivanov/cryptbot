@@ -8,11 +8,11 @@ class AbstractStrategy(ABC):
             setattr(self, key, value)
 
     @abstractmethod
-    def set_settings(self, short_term, long_term, client):
+    def set_settings(self, short_term, long_term, trading_capital, losses, candle_interval, client):
         pass
 
     @abstractmethod
-    def run_strategy(self, interval, stream_id):
+    def run_strategy(self):
         pass
 
     @abstractmethod
@@ -32,5 +32,5 @@ class AbstractStrategy(ABC):
         pass
 
     @abstractmethod
-    def stop_strategy(self, price_data, wallet_data, recv_window):
+    def stop_strategy(self,  total_assets, capital, wallet_data, recv_window):
         pass
