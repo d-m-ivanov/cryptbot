@@ -29,7 +29,7 @@ class BackTester:
 
         :param start_day: datetime from which we start our backtest
         :param end_day: datetime in which we stop our backtest
-        :return: In the end of iteration this method make report in form of excel file
+        :return: In the end of iteration this method makes report in form of excel file
         """
         file_name = (str(self._strategy) + self.base + self.quote + "_")  # Create name of a file for report
         hist_data = self.get_historical_candles(start_day=start_day, end_day=end_day)  # Get historical data
@@ -48,7 +48,7 @@ class BackTester:
         self.form_report(price_data=price_data, file_name=file_name)
 
     def get_historical_candles(self, start_day: datetime, end_day: datetime) -> pd.DataFrame:
-        """This is a support method which extract historical data from exchange
+        """This is a support method which extracts historical data from exchange
 
         :param start_day: datetime from which we start our backtest
         :param end_day: datetime in which we stop our backtest
@@ -60,8 +60,8 @@ class BackTester:
         return self._strategy.candle_preprocessing(candles_data)
 
     def mock_order(self, price_data: pd.DataFrame, step: int) -> None:
-        """This method check if we wanna buy or sell on base of a strategy.
-        If so method add info about trade in to dataframe
+        """This method checks if we wanna buy or sell on base of a strategy.
+        If so method adds info about trade into dataframe
 
         :param price_data: dataframe with data on current step of iteration
         :param step: step of iteration
@@ -94,8 +94,8 @@ class BackTester:
             price_data.loc[step, self.assets] = self.assets_amount
 
     def form_report(self, price_data: pd.DataFrame, file_name: str) -> None:
-        """Method grab price data after backtesting, compute info about capital on all period of backtesting
-        and save report in form of exel file
+        """Method grabs price data after backtesting, computes info about capital on whole period of backtesting
+        and saves report in form of excel file
 
         :param price_data: dataframe of price data after backtesting
         :param file_name: name of the file in which data will be saved
