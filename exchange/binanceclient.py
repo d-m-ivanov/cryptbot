@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from exchange.utils import get_intervals
 from datetime import datetime, timezone
-from websocket import create_connection
+from websocket import create_connection, WebSocketConnectionClosedException
 
 
 class BinanceAPIClient(Exception):
@@ -34,22 +34,24 @@ class BinanceAPIClient(Exception):
         self._stream_id = None
         self._candles_interval = ""
         self._check_pair()
-        if mode == "prod":
-            self._http = "https://api.binance.com/"
-            self._wss = "wss://stream.binance.com:9443/ws"
-        if mode == "test":
-            self._http = "https://testnet.binance.vision/"
-            self._wss = "wss://testnet.binance.vision/ws"
+        self._http = None
+        self._wss = None
+        self.set_mode(mode=mode)
 
     def __next__(self):
         while self._stream_running:
-            candle = json.loads(self.ws.recv())
-            if candle["k"]["x"]:
-                new_candle = {key: var for key, var in candle["k"].items() if key in self.__candle_headers}
-                candlestick_df = pd.DataFrame(data=new_candle, index=[0])
-                return self._normalize_candlestick_df(candlestick_df)
-        if self._stream_running is False:
-            raise StopIteration
+            # This construction should reconnect to websocket stream if connection was closed by server
+            try:
+                candle = json.loads(self.ws.recv())
+                if candle["k"]["x"]:
+                    new_candle = {key: var for key, var in candle["k"].items() if key in self.__candle_headers}
+                    candlestick_df = pd.DataFrame(data=new_candle, index=[0])
+                    return self._normalize_candlestick_df(candlestick_df)
+            except WebSocketConnectionClosedException:
+                self._stream_id += 1
+                self.start_candle_stream(candles_interval=self._candles_interval, stream_id=self._stream_id)
+            if self._stream_running is False:
+                raise StopIteration
 
     def __iter__(self):
         self._stream_running = True
@@ -63,6 +65,9 @@ class BinanceAPIClient(Exception):
         self.secret = secret_key
         self.pair = self._get_pair()
         self._check_pair()
+        self.set_mode(mode=mode)
+
+    def set_mode(self, mode="test"):
         if mode == "prod":
             self._http = "https://api.binance.com/"
             self._wss = "wss://stream.binance.com:9443/ws"
@@ -233,15 +238,15 @@ class BinanceAPIClient(Exception):
 
     # Start websocket candlestik stream
     def start_candle_stream(self, candles_interval: str = "1m", stream_id=1):
+        self._stream_id = stream_id
+        self._candles_interval = candles_interval
         self.ws = create_connection(self._wss)
         params = {"method": "SUBSCRIBE",
                   "params": ["{symbol}@kline_{interval}".format(symbol=self.pair.lower(), interval=candles_interval)],
-                  "id": stream_id}
+                  "id": self._stream_id}
         self.ws.send(json.dumps(params))
         if json.loads(self.ws.recv())["result"] is not None:
             raise Exception("Connection is failed!")
-        self._stream_id = stream_id
-        self._candles_interval = candles_interval
         return self.ws
 
     # Stop websocket candlestik stream
