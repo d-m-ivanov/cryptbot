@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 from exchange.binanceclient import BinanceAPIClient
 from strategies.abstract_strategy import AbstractStrategy
@@ -102,4 +103,11 @@ class BackTester:
         """
         price_data["capital"] = price_data[self.quote] + price_data[self.base] * price_data["close_price"]
         price_data["close_time"] = price_data["close_time"].dt.tz_localize(None)
-        price_data.to_excel(file_name + "backtest.xlsx", sheet_name="Sheet_name_1")
+        # Create directory for reports (if not exists)
+        dir_name = "../crypt_bot/back_test_files/"
+        try:
+            os.makedirs(dir_name)
+            print("Directory ", dir_name, " Created ")
+        except FileExistsError:
+            print("Directory ", dir_name, " already exists")
+        price_data.to_excel(dir_name + file_name + "backtest.xlsx")

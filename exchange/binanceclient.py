@@ -263,7 +263,7 @@ class BinanceAPIClient(Exception):
 
     def _check_pair(self):
         data = []
-        with open("../exchange/all_pairs.txt", "r") as f:
+        with open("../crypt_bot/exchange/all_pairs.txt", "r") as f:
             for line in f:
                 data.append(line.rstrip("\n"))
             if self.pair not in data:
