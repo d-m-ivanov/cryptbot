@@ -111,5 +111,5 @@ class BackTester:
             os.makedirs(dir_name)
             print("Directory ", dir_name, " Created ")
         except FileExistsError:
-            print("Directory ", dir_name, " already exists")
+            pass
         price_data.to_excel(dir_name + file_name + "backtest.xlsx")
