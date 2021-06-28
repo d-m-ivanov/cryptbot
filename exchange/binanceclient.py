@@ -3,9 +3,9 @@ import hmac
 import json
 import hashlib
 import requests
+import pathlib
 import numpy as np
 import pandas as pd
-import pathlib
 from exchange.utils import get_intervals
 from datetime import datetime, timezone
 from websocket import create_connection, WebSocketConnectionClosedException

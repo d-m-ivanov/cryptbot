@@ -1,4 +1,5 @@
 import os
+import pathlib
 import pandas as pd
 from exchange.binanceclient import BinanceAPIClient
 from strategies.abstract_strategy import AbstractStrategy
@@ -104,7 +105,8 @@ class BackTester:
         price_data["capital"] = price_data[self.quote] + price_data[self.base] * price_data["close_price"]
         price_data["close_time"] = price_data["close_time"].dt.tz_localize(None)
         # Create directory for reports (if not exists)
-        dir_name = "../crypt_bot/back_test_files/"
+        script_dir = str(pathlib.PureWindowsPath(__file__).parent.parent.as_posix())
+        dir_name = script_dir + "/back_test_files/"
         try:
             os.makedirs(dir_name)
             print("Directory ", dir_name, " Created ")
