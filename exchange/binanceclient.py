@@ -5,6 +5,7 @@ import hashlib
 import requests
 import numpy as np
 import pandas as pd
+import pathlib
 from exchange.utils import get_intervals
 from datetime import datetime, timezone
 from websocket import create_connection, WebSocketConnectionClosedException
@@ -262,8 +263,9 @@ class BinanceAPIClient(Exception):
         return self.base + self.quote
 
     def _check_pair(self):
+        script_dir = str(pathlib.PureWindowsPath(__file__).parent.as_posix())
         data = []
-        with open("../crypt_bot/exchange/all_pairs.txt", "r") as f:
+        with open(script_dir + "/all_pairs.txt", "r") as f:
             for line in f:
                 data.append(line.rstrip("\n"))
             if self.pair not in data:
