@@ -3,6 +3,7 @@ import hmac
 import json
 import hashlib
 import requests
+import pathlib
 import numpy as np
 import pandas as pd
 from exchange.utils import get_intervals
@@ -262,8 +263,9 @@ class BinanceAPIClient(Exception):
         return self.base + self.quote
 
     def _check_pair(self):
+        script_dir = str(pathlib.PureWindowsPath(__file__).parent.as_posix())
         data = []
-        with open("../exchange/all_pairs.txt", "r") as f:
+        with open(script_dir + "/all_pairs.txt", "r") as f:
             for line in f:
                 data.append(line.rstrip("\n"))
             if self.pair not in data:
